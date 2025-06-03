@@ -6,6 +6,7 @@ import urllib.parse
 import os
 from rdkit import Chem
 from rdkit.Chem import AllChem # Not explicitly used, but often useful with RDKit
+import pubchempy as pcp
 
 class RealWorldChemicalDataCollector:
     def __init__(self, delay=0.5, max_retries=3, gemini_api_key=None):
@@ -224,86 +225,74 @@ class RealWorldChemicalDataCollector:
     def _search_pubchem_by_term(self, search_term, max_compounds_to_fetch_for_term):
         term_collected_internally = [] 
         try:
-            safe_term = urllib.parse.quote(search_term)
-            initial_cid_fetch_count = min(max_compounds_to_fetch_for_term * 3, 250)
-            if initial_cid_fetch_count < 10: initial_cid_fetch_count = 10 
+          compounds = pcp.get_compounds(search_term,"name")
+          time.sleep(self.delay) # Respect PubChem API rate limits
 
-            listkey_url = f"{self.end_points['pubchem']}/compound/name/{safe_term}/cids/JSON?list_return=listkey&MaxRecords={initial_cid_fetch_count}"
-            
-            response = requests.get(listkey_url, timeout=30)
-            time.sleep(self.delay) 
-
-            if response.status_code != 200:
-                if response.status_code == 404:
-                     print(f"      ℹ️ PubChem CID search for '{search_term}' (name lookup) returned 404. Term not found as specific name/synonym.")
-                else:
-                     print(f"      ⚠️ PubChem CID search error for '{search_term}': {response.status_code} - {response.text.strip()}")
-                     print(f"         Attempted URL: {listkey_url}")
-                return term_collected_internally
-            
-            listkey_data = response.json()
-            listkey = listkey_data.get("IdentifierList", {}).get("ListKey")
-            
-            if not listkey:
-                print(f"      ℹ️ No ListKey found for '{search_term}' on PubChem (term might be too general or yield no results for name lookup).")
-                return term_collected_internally
-
-            props_url = (f"{self.end_points['pubchem']}/compound/listkey/{listkey}"
-                         f"/property/CanonicalSMILES,Title/JSON")
-            prop_response = requests.get(props_url, timeout=30)
-            time.sleep(self.delay)
-
-            if prop_response.status_code != 200:
-                print(f"      ⚠️ PubChem property fetch error for '{search_term}' (ListKey {listkey}): {prop_response.status_code} - {prop_response.text.strip()}")
-                return term_collected_internally
-            
-            props_data = prop_response.json()
-            properties = props_data.get("PropertyTable", {}).get("Properties", [])
-
-            count_added_this_call = 0
-            for prop_entry in properties: 
-                if count_added_this_call >= max_compounds_to_fetch_for_term: 
-                    break
-
-                smiles = prop_entry.get("CanonicalSMILES")
-                cid = prop_entry.get("CID")
-                name = prop_entry.get('Title', f"PubChem CID {cid}") 
-
-                if not smiles: 
-                    continue
-                
-                mol = Chem.MolFromSmiles(smiles)
-                if mol is None:
-                    continue
-
-                applications = self._get_applications_via_gemini(smiles, name=name, context_hint=search_term)
-                
-                if not applications or "error_gemini_fallback" in str(applications) or "unknown_from_gemini" in str(applications):
+          if not compounds:
+            print(f"      ℹ️ PubChemPy found no compounds for term '{search_term}'.")
+            return term_collected_internally
+          count_added_this_call = 0
+          for compound in compounds:
+            if count_added_this_call >= max_compounds_to_fetch_for_term:
+                  print(f"       Hitting max_compounds_to_fetch_for_term ({max_compounds_to_fetch_for_term}) for '{search_term}'")
+                  break
+            smiles = compound.canonical_smiles
+            cid = compound.cid
+            name = compound.title if compound.title else \
+                       (compound.iupac_name if compound.iupac_name else \
+                        (compound.synonyms[0] if compound.synonyms else f"PubChem CID {cid}"))
+            if not smiles or not cid:
+                    # print(f"      ⚠️ Missing SMILES or CID for a compound from term '{search_term}'. CID: {cid}, SMILES: {smiles}. Skipping.")
+                continue
+            mol = Chem.MolFromSmiles(smiles)
+            if mol is None:
+                    # print(f"      ⚠️ Invalid SMILES '{smiles}' from PubChemPy for CID {cid} (term: '{search_term}'). Skipping.")
+              continue
+            applications = self._get_applications_via_gemini(smiles, name=name, context_hint=search_term)
+            if not applications or "error_gemini_fallback" in str(applications) or "unknown_from_gemini" in str(applications):
                     final_applications = [search_term, self._map_hint_to_category(search_term)]
-                    if "unknown_from_gemini" in str(applications): 
+                    if "unknown_from_gemini" in str(applications):
                          final_applications.append("unknown_application_confirmed_by_gemini")
-                else:
-                    final_applications = list(applications) 
-                    final_applications.append(search_term) 
-                    main_category = self._map_hint_to_category(search_term)
-                    if main_category and main_category != "unknown": 
-                        final_applications.append(main_category)
-                
-                term_collected_internally.append({
+            else:
+              
+              final_applications = list(applications)
+              final_applications.append(search_term)
+              main_category = self._map_hint_to_category(search_term)
+              if main_category and main_category != "unknown":
+                final_applications.append(main_category)
+            term_collected_internally.append({
                     'smiles': smiles,
-                    'applications': list(set(app for app in final_applications if app and app.strip())), 
-                    'source': 'pubchem',
+                    'applications': list(set(app for app in final_applications if app and app.strip())),
+                    'source': 'pubchem_pubchempy', # Updated source
                     'compound_id': f"CID_{cid}",
                     'name': name
                 })
-                count_added_this_call += 1
+            count_added_this_call += 1
+
+        if count_added_this_call > 0:
+          print(f"      ✅ PubChemPy processed {count_added_this_call} potential compounds for '{search_term}'.")
+
+
                 
-        except requests.exceptions.Timeout:
-            print(f"      ⏳ PubChem request timed out for '{search_term}'.")
-        except requests.exceptions.RequestException as e:
-            print(f"      ❌ PubChem network error for '{search_term}': {e}")
+
+
+                
+        except pcp.PubChemHTTPError as e:
+            # This can catch various HTTP errors, including 404s if get_compounds itself fails,
+            # or rate limit errors if not handled by delays.
+            # However, get_compounds usually returns an empty list for "not found" by name.
+            if 'PUGREST.NotFound' in str(e) or '404' in str(e):
+                 print(f"      ℹ️ PubChemPy query for '{search_term}' resulted in Not Found / 404 error: {e}")
+            else:
+                 print(f"      ⚠️ PubChemPy HTTP error for '{search_term}': {e}")
+        except requests.exceptions.Timeout: # pubchempy uses requests internally
+            print(f"      ⏳ PubChemPy request timed out for '{search_term}'.")
+        except requests.exceptions.RequestException as e: # General network errors
+            print(f"      ❌ PubChemPy network error for '{search_term}': {e}")
         except Exception as e:
-            print(f"      ❌ Unexpected error in _search_pubchem_by_term for '{search_term}': {e}")
+            print(f"      ❌ Unexpected error in _search_pubchem_by_term with PubChemPy for '{search_term}': {type(e).__name__} - {e}")
+        
+
         
         return term_collected_internally
 
