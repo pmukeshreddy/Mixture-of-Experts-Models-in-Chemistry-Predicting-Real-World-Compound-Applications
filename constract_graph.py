@@ -38,3 +38,22 @@ def get_atom_featues(atom:Chem.atom):
     features = atom_type_one_hot + [formal_charge, is_aromatic, degree, num_hydrogens, is_chiral] + hybridization_one_hot
 
     return features
+
+
+def get_bond_features(bond:Chem.Bond):
+    bond_types = [
+        Chem.rdchem.BondType.SINGLE,
+        Chem.rdchem.BondType.DOUBLE,
+        Chem.rdchem.BondType.TRIPLE,
+        Chem.rdchem.BondType.AROMATIC,
+        'Unknown'
+    ]
+    bond_types_one_hot = [0.0] * len(bond_types)
+    try:
+        bond_types_one_hot[bond_types.index(bond.GetBondType())] = 1.0
+    except ValueError:
+        bond_types_one_hot[-1] = 1
+    is_conjugated = float(bond.GetIsConjugated())
+    is_in_ring = float(bond.IsInRing())
+    features = bond_types_one_hot + [is_conjugated,is_in_ring]
+    return features
