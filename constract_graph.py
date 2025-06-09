@@ -57,3 +57,40 @@ def get_bond_features(bond:Chem.Bond):
     is_in_ring = float(bond.IsInRing())
     features = bond_types_one_hot + [is_conjugated,is_in_ring]
     return features
+
+
+
+def smiles_to_graph_data(smiles_string,y_label):
+    mol = Chem.MolFromSmiles(smiles_string)
+
+    if mol is None:
+        return None
+
+    atom_features_list = []
+    for atom in mol.GetAtoms():
+        atom_features_list.append(get_atom_featues(atom))
+    x = torch.tensor(np.array(atom_features_list),dtype=torch.float)
+
+    edge_index = []
+    edge_features_list = []
+
+    if mol.GetNumBonds() > 0:
+        for bond in mol.GetBonds():
+            i = bond.GetBeginAtomIdx()
+            j = bond.GetEndAtomIdx()
+
+            edge_index.append((i,j))
+            edge_index.append((j,i))
+
+            bon_features = get_bond_features(bond)
+            edge_features_list.append(bon_features)
+            edge_features_list.append(bon_features)
+        edge_index = torch.tensor(np.array(edge_indices).T, dtype=torch.long) # transpose so when we pass it geometric lib it will work
+        edge_attr = torch.tensor(np.array(edge_features_list), dtype=torch.float)
+
+    else:
+        edge_index = torch.empty((2, 0), dtype=torch.long)
+        edge_attr = torch.empty((0, 7), dtype=torch.float)
+    y = torch.tensor([y_label], dtype=torch.float) # Shape: [1, num_labels]
+    return Data(x=x,edge_index=edge_index,edge_attr=edge_attr,y=y)
+
