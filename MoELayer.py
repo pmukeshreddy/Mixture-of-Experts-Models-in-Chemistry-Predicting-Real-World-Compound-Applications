@@ -61,6 +61,6 @@ class MoELayer(nn.Module):
                     final_output_flat.index_add_(0,token_indices_for_this_expert_at_k,weighted_expert_output)
                     
         final_output = final_output_flat.reshape(batch_size,seq_len,self.output_dim)
-        return final_output , self.load_balance_loss_coeff * load_balancing_loss
+        return final_output , self.load_balance_loss_coeff  * load_balancing_loss
                     
             
