@@ -7,6 +7,7 @@ class GNN_MoE_Model(nn.Module):
             self.projection = nn.Linear(gnn_output_dim,transformer_d_model)
         else:
             self.projection = nn.Identity()
+            
     def forward(self,graph_data):
         graph_embeddings = self.gnn(graph_data) #[batch_size,gnn_outputsize]
         projected_embeddings = self.projection(graph_embeddings) #[batch_size,transformer_d_model]
