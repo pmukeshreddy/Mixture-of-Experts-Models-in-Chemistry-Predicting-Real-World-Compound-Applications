@@ -18,4 +18,5 @@ class GNN_MoE_Model(nn.Module):
 
         logits , total_aux_loss = self.moe_transformer(src_tokens_or_embeddings=transformer_input_embeddings,padding_mask=transformer_padding_mask,
                                                       is_embedded=True)
+        
         return logits , total_aux_loss
